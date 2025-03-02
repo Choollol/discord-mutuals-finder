@@ -1,24 +1,48 @@
+interface Options {
+  existenceStatusToWaitFor?: boolean,
+  otherSelectorOptions?: string[],
+  maxTimeMilliseconds?: number,
+}
+
 export function waitForElement(
   selector: string,
-  existenceStatusToWaitFor: boolean = true,
-  maxTimeMilliseconds: number = 3000
+  { existenceStatusToWaitFor = true,
+    otherSelectorOptions = [],
+    maxTimeMilliseconds = 3000 }: Options = {}
 ): Promise<Element | null> {
   return new Promise((resolve) => {
     const observer = new MutationObserver((_mutations, me) => {
-      const element = document.querySelector(selector);
+      let element = document.querySelector(selector);
+      let hasElement = element !== null;
+      if (!hasElement && otherSelectorOptions.length > 0) {
+        for (const selector of otherSelectorOptions) {
+          const tempElement = document.querySelector(selector);
+          if (tempElement) {
+            element = tempElement;
+            hasElement = true;
+            break;
+          }
+        }
+      }
       if (
-        (existenceStatusToWaitFor && element) ||
-        (!existenceStatusToWaitFor && !element)
+        (existenceStatusToWaitFor && hasElement) ||
+        (!existenceStatusToWaitFor && !hasElement)
       ) {
-        me.disconnect();
-        resolve(element);
+        finish(element);
       }
     });
 
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(null);
+
+    const timeout = setTimeout(() => {
+      console.log("waitForElement() timed out");
+      finish(null);
     }, maxTimeMilliseconds);
+
+    function finish(element: Element | null) {
+      observer.disconnect();
+      resolve(element);
+      clearTimeout(timeout);
+    }
 
     observer.observe(document.body, {
       childList: true,
@@ -37,5 +61,11 @@ export function waitForDOMChange() {
       childList: true,
       subtree: true,
     });
+  });
+}
+
+export function waitForMilliseconds(waitTimeMs: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, waitTimeMs);
   });
 }

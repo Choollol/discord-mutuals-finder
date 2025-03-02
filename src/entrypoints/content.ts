@@ -1,6 +1,19 @@
-import { clickElement } from "@/utils/element-utils";
+import { clickElement, SELF_PROFILE_SELECTOR, SERVER_NAME_SELECTOR } from "@/utils/element-utils";
 import { Message } from "@/utils/message-utils";
-import { waitForDOMChange, waitForElement } from "@/utils/wait-utils";
+import { waitForElement } from "@/utils/wait-utils";
+import {
+  MEMBER_CONTAINER_SELECTOR,
+  BOT_TAG_SELECTOR,
+  MORE_BUTTON_SELECTOR,
+  PROFILE_BUTTON_SELECTOR,
+  TAB_ITEM_SELECTOR,
+  MUTUALS_LIST_ITEM_SELECTOR,
+  BACKDROP_SELECTOR,
+  PROFILE_CARD_SELECTOR,
+  NO_MUTUALS_SELECTOR,
+  ABOUT_ME_SCROLLER_SELECTOR,
+} from "@/utils/element-utils";
+import { MutualType } from "@/utils/mutual-utils";
 
 
 export default defineContentScript({
@@ -11,60 +24,108 @@ export default defineContentScript({
 
     const getMutuals = async () => {
       console.log("getting mutuals");
-      console.log(doStop);
 
-      const members = document.querySelectorAll(".container__91a9d");
+      const serverNameElement = document.querySelector(SERVER_NAME_SELECTOR);
+      if (!serverNameElement) {
+        console.error("Couldn't find server name!");
+        return;
+      }
+      const serverName = serverNameElement.innerHTML;
+
+      const members = document.querySelectorAll(MEMBER_CONTAINER_SELECTOR);
       console.log(`members: ${members.length}`);
       for (const member of members) {
+        // Check for stop
         if (doStop) {
           console.log("Stopping");
           return;
         }
 
-        if (member.querySelector(".botTag__5d473") !== null) {
+        // Skip bots, i.e. members with bot tag
+        if (member.querySelector(BOT_TAG_SELECTOR) !== null) {
           console.log("Skipping bot");
           continue;
         }
+
         clickElement(member);
 
-        const moreButton = await waitForElement(
-          '.button_fb7f94[aria-label="More"]'
-        );
-        if (!moreButton) {
+        // Go into full profile
+        const cardButton = await waitForElement(MORE_BUTTON_SELECTOR, { otherSelectorOptions: [SELF_PROFILE_SELECTOR] });
+        if (!cardButton) {
           clickElement(member);
+          console.log("No card button!");
+          break;
+        }
+        if (document.querySelector(SELF_PROFILE_SELECTOR)) {
+          clickElement(member);
+          console.log("Skipping self!");
+          await waitForElement(SELF_PROFILE_SELECTOR, { existenceStatusToWaitFor: false });
           continue;
         }
-        clickElement(moreButton);
-
-        const profileButton = await waitForElement(
-          '[id="user-profile-overflow-menu-view-profile"]'
-        );
+        clickElement(cardButton);
+        const profileButton = await waitForElement(PROFILE_BUTTON_SELECTOR);
         if (!profileButton) {
+          console.error("No profile button element!");
           break;
         }
         clickElement(profileButton);
 
-        await waitForElement(".item_b3f026");
-        const tabItems = document.querySelectorAll(".item_b3f026");
+        await waitForElement(TAB_ITEM_SELECTOR);
+        const tabItems = document.querySelectorAll(TAB_ITEM_SELECTOR).values();
 
-        for (const tabItem of tabItems) {
-          if (tabItem.children[0].innerHTML === "About Me") {
-            continue;
-          }
-          clickElement(tabItem);
-          await waitForDOMChange();
-          const items = document
-            .querySelectorAll(".listName__9d78f")
-            .values()
-            .map((element) => element.innerHTML);
-
-          //items.forEach((item) => console.log(item));
+        const aboutMeButton = tabItems.find((tab) => tab.firstElementChild?.innerHTML === "About Me");
+        if (!aboutMeButton) {
+          console.error("No About Me button!");
+          continue;
         }
 
-        const backdrop = document.querySelector(".backdrop__78332")!;
+        for (const tabItem of tabItems) {
+          const tabChild = tabItem.firstElementChild;
+          if (!tabChild) {
+            console.error("Couldn't find tab child!");
+            return;
+          }
+          const tabName = tabChild.innerHTML.toLowerCase();
+          if (!tabName.includes("mutual")) {
+            continue;
+          }
+
+          let mutualType = MutualType.FRIEND;
+          if (tabName.includes("server")) {
+            mutualType = MutualType.SERVER;
+          }
+
+          // Go to About Me section to clear DOM of mutuals list, to be able to wait for mutuals list to appear
+          clickElement(aboutMeButton);
+          await waitForElement(ABOUT_ME_SCROLLER_SELECTOR);
+
+          clickElement(tabItem);
+          await waitForElement(MUTUALS_LIST_ITEM_SELECTOR, { otherSelectorOptions: [NO_MUTUALS_SELECTOR] });
+
+          const mutuals = document
+            .querySelectorAll(MUTUALS_LIST_ITEM_SELECTOR)
+            .values()
+            .map((element) => {
+              if (element.firstElementChild === null) {
+                return element.innerHTML;
+              }
+              else {
+                return element.firstElementChild.innerHTML;
+              }
+            })
+            .filter((name) => mutualType !== MutualType.SERVER || name !== serverName);
+
+          mutuals.forEach((item) => { console.log(item) });
+        }
+
+        const backdrop = document.querySelector(BACKDROP_SELECTOR);
+        if (!backdrop) {
+          console.error("No backdrop element!");
+          break;
+        }
         clickElement(backdrop);
 
-        await waitForElement(".outer_c0bea0", false);
+        await waitForElement(PROFILE_CARD_SELECTOR, { existenceStatusToWaitFor: false });
       }
 
       console.log("finished");
@@ -72,12 +133,10 @@ export default defineContentScript({
 
     browser.runtime.onMessage.addListener((message) => {
       if (message.type === Message.START) {
-        console.log("message start");
         doStop = false;
         getMutuals();
       }
       else if (message.type === Message.STOP) {
-        console.log("message stop");
         doStop = true;
       }
     });
